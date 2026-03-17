@@ -235,7 +235,7 @@ st.sidebar.markdown(
 This is the **predicted sales value** for that day.
 
 Example:  
-If **yhat = 500**, the model expects about **$500 in sales**.
+If yhat = 500, the model expects about $500 in sales.
 
 ---
 
