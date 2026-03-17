@@ -268,7 +268,7 @@ This means:
 The app expects sales to be around **500**.
 
 A realistic range is roughly **420 to 580**.
-"""
+
 
 ---
 
