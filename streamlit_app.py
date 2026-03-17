@@ -1,4 +1,3 @@
-import io
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -7,35 +6,47 @@ from prophet import Prophet
 st.set_page_config(page_title="Demand Forecasting Dashboard", layout="wide")
 
 st.title("Small Business Demand Forecasting")
-st.write("Upload a CSV file, map your date and sales columns, and generate a forecast.")
+st.write("Upload a CSV file, map your columns, and generate a forecast with business insights.")
+
 
 # -----------------------------
 # Helpers
 # -----------------------------
+def clean_sales_column(series: pd.Series) -> pd.Series:
+    """
+    Cleans sales values like:
+    $1,240.50
+    1,240
+    USD 540
+    """
+    cleaned = (
+        series.astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.replace("USD", "", regex=False)
+        .str.strip()
+    )
+    return pd.to_numeric(cleaned, errors="coerce")
+
+
 def clean_and_prepare_data(df: pd.DataFrame, date_col: str, sales_col: str) -> pd.DataFrame:
     """
     Clean uploaded data and return a daily aggregated dataframe
     with Prophet-friendly columns: ds, y
     """
-    work_df = df.copy()
-
-    work_df = work_df[[date_col, sales_col]].copy()
+    work_df = df[[date_col, sales_col]].copy()
     work_df.columns = ["date", "sales"]
 
     work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
-    work_df["sales"] = pd.to_numeric(work_df["sales"], errors="coerce")
+    work_df["sales"] = clean_sales_column(work_df["sales"])
 
     work_df = work_df.dropna(subset=["date", "sales"])
 
     # Aggregate to daily totals
-    work_df = (
-        work_df.groupby(work_df["date"].dt.date, as_index=False)["sales"]
-        .sum()
-        .rename(columns={"date": "date"})
-    )
+    work_df = work_df.groupby(work_df["date"].dt.date, as_index=False)["sales"].sum()
     work_df["date"] = pd.to_datetime(work_df["date"])
 
-    # Fill missing dates with 0 sales so the series is continuous
+    # Fill missing dates with 0 sales
     full_dates = pd.date_range(work_df["date"].min(), work_df["date"].max(), freq="D")
     work_df = work_df.set_index("date").reindex(full_dates, fill_value=0).reset_index()
     work_df.columns = ["date", "sales"]
@@ -45,9 +56,6 @@ def clean_and_prepare_data(df: pd.DataFrame, date_col: str, sales_col: str) -> p
 
 
 def get_weekday_summary(prophet_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Return average sales by weekday based on historical data.
-    """
     weekday_df = prophet_df.copy()
     weekday_df["weekday"] = weekday_df["ds"].dt.day_name()
 
@@ -68,9 +76,6 @@ def get_weekday_summary(prophet_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def train_model(prophet_df: pd.DataFrame) -> Prophet:
-    """
-    Train Prophet model.
-    """
     model = Prophet(
         yearly_seasonality=True,
         weekly_seasonality=True,
@@ -81,9 +86,6 @@ def train_model(prophet_df: pd.DataFrame) -> Prophet:
 
 
 def make_forecast(model: Prophet, periods: int) -> pd.DataFrame:
-    """
-    Forecast future periods.
-    """
     future = model.make_future_dataframe(periods=periods, freq="D")
     forecast = model.predict(future)
     return forecast
@@ -93,11 +95,57 @@ def convert_df_to_csv(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
 
+def build_insights(
+    future_forecast: pd.DataFrame,
+    weekday_summary: pd.DataFrame,
+    historical_df: pd.DataFrame
+) -> list[str]:
+    insights = []
+
+    busiest_day = weekday_summary.loc[weekday_summary["avg_sales"].idxmax(), "weekday"]
+    slowest_day = weekday_summary.loc[weekday_summary["avg_sales"].idxmin(), "weekday"]
+
+    highest_forecast_row = future_forecast.loc[future_forecast["yhat"].idxmax()]
+    lowest_forecast_row = future_forecast.loc[future_forecast["yhat"].idxmin()]
+
+    historical_avg = historical_df["y"].mean()
+    future_avg = future_forecast["yhat"].mean()
+
+    if future_avg > historical_avg:
+        insights.append("Sales appear to be trending upward compared to your historical average.")
+    elif future_avg < historical_avg:
+        insights.append("Sales appear to be trending slightly below your historical average.")
+    else:
+        insights.append("Sales appear relatively stable compared to your historical average.")
+
+    insights.append(f"Your busiest historical weekday is {busiest_day}, while {slowest_day} is typically your slowest.")
+    insights.append(
+        f"Your highest forecasted day is {highest_forecast_row['ds'].date()} "
+        f"with expected sales of {highest_forecast_row['yhat']:.2f}."
+    )
+    insights.append(
+        f"Your lowest forecasted day is {lowest_forecast_row['ds'].date()} "
+        f"with expected sales of {lowest_forecast_row['yhat']:.2f}."
+    )
+
+    if busiest_day in ["Friday", "Saturday", "Sunday"]:
+        insights.append("Consider increasing staffing or inventory ahead of the weekend.")
+    else:
+        insights.append("Demand is strongest on weekdays, so plan staffing around your weekday peaks.")
+
+    return insights
+
+
 # -----------------------------
 # Sidebar
 # -----------------------------
 st.sidebar.header("Settings")
 forecast_days = st.sidebar.slider("Forecast horizon (days)", min_value=7, max_value=30, value=14)
+
+business_type = st.sidebar.selectbox(
+    "Business type",
+    ["Restaurant", "Retail", "Salon", "Gym", "Other"]
+)
 
 uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
@@ -113,7 +161,7 @@ if uploaded_file is not None:
         st.stop()
 
     st.subheader("Raw Data Preview")
-    st.dataframe(raw_df.head())
+    st.dataframe(raw_df.head(), use_container_width=True)
 
     columns = list(raw_df.columns)
 
@@ -121,7 +169,7 @@ if uploaded_file is not None:
     with col1:
         date_col = st.selectbox("Select the date column", options=columns)
     with col2:
-        sales_col = st.selectbox("Select the sales column", options=columns)
+        sales_col = st.selectbox("Select the sales/revenue column", options=columns)
 
     if st.button("Generate Forecast"):
         try:
@@ -143,24 +191,56 @@ if uploaded_file is not None:
             future_forecast["yhat_upper"] = future_forecast["yhat_upper"].round(2)
 
             weekday_summary = get_weekday_summary(prophet_df)
+            weekday_summary["avg_sales"] = weekday_summary["avg_sales"].round(2)
+
             busiest_day = weekday_summary.loc[weekday_summary["avg_sales"].idxmax(), "weekday"]
             slowest_day = weekday_summary.loc[weekday_summary["avg_sales"].idxmin(), "weekday"]
+
+            highest_forecast_row = future_forecast.loc[future_forecast["yhat"].idxmax()]
+            lowest_forecast_row = future_forecast.loc[future_forecast["yhat"].idxmin()]
+
+            total_next_period = future_forecast["yhat"].sum()
+            avg_daily_next_period = future_forecast["yhat"].mean()
 
             # -----------------------------
             # KPI cards
             # -----------------------------
             st.subheader("Key Insights")
-
-            total_next_period = future_forecast["yhat"].sum()
-            avg_daily_next_period = future_forecast["yhat"].mean()
-
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Forecast Days", forecast_days)
             k2.metric("Expected Sales", f"{total_next_period:,.2f}")
             k3.metric("Avg Daily Sales", f"{avg_daily_next_period:,.2f}")
-            k4.metric("Busiest Day", busiest_day)
+            k4.metric("Busiest Weekday", busiest_day)
 
-            st.write(f"**Slowest Day:** {slowest_day}")
+            k5, k6, k7 = st.columns(3)
+            k5.metric("Slowest Weekday", slowest_day)
+            k6.metric("Highest Forecast Day", f"{highest_forecast_row['ds'].date()}")
+            k7.metric("Lowest Forecast Day", f"{lowest_forecast_row['ds'].date()}")
+
+            # -----------------------------
+            # Recommendation box
+            # -----------------------------
+            st.subheader("Recommendations")
+            insights = build_insights(future_forecast, weekday_summary, prophet_df)
+
+            if business_type == "Restaurant":
+                st.info("\n\n".join(insights + [
+                    "For restaurants, use this to prepare staffing, food prep, and weekend ordering."
+                ]))
+            elif business_type == "Retail":
+                st.info("\n\n".join(insights + [
+                    "For retail, use this to adjust inventory purchasing and staff coverage on peak days."
+                ]))
+            elif business_type == "Salon":
+                st.info("\n\n".join(insights + [
+                    "For salons, use this to plan appointment capacity and staffing during peak periods."
+                ]))
+            elif business_type == "Gym":
+                st.info("\n\n".join(insights + [
+                    "For gyms, use this to anticipate class demand and front-desk staffing needs."
+                ]))
+            else:
+                st.info("\n\n".join(insights))
 
             # -----------------------------
             # Forecast table
@@ -194,15 +274,25 @@ if uploaded_file is not None:
             st.pyplot(fig2)
 
             # -----------------------------
-            # Weekday summary
+            # Weekday summary table
             # -----------------------------
             st.subheader("Average Historical Sales by Weekday")
-            weekday_display = weekday_summary.copy()
-            weekday_display["avg_sales"] = weekday_display["avg_sales"].round(2)
-            st.dataframe(weekday_display, use_container_width=True)
+            st.dataframe(weekday_summary, use_container_width=True)
 
             # -----------------------------
-            # Historical data preview after cleaning
+            # Weekday bar chart
+            # -----------------------------
+            st.subheader("Weekday Sales Pattern")
+            fig3, ax = plt.subplots(figsize=(10, 4))
+            ax.bar(weekday_summary["weekday"].astype(str), weekday_summary["avg_sales"])
+            ax.set_title("Average Historical Sales by Weekday")
+            ax.set_xlabel("Weekday")
+            ax.set_ylabel("Average Sales")
+            plt.xticks(rotation=45)
+            st.pyplot(fig3)
+
+            # -----------------------------
+            # Cleaned data preview
             # -----------------------------
             st.subheader("Cleaned Historical Daily Data")
             cleaned_display = prophet_df.rename(columns={"ds": "date", "y": "sales"}).copy()
@@ -214,7 +304,7 @@ if uploaded_file is not None:
 else:
     st.info("Upload a CSV to get started.")
     st.markdown(
-    """
+        """
 Example CSV format:
 
 ```csv
