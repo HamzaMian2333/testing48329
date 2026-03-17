@@ -259,11 +259,16 @@ Sales are unlikely to go above this number.
 
 If the forecast shows:
 
-yhat = 500  
-yhat_lower = 420  
-yhat_upper = 580  
+- Predicted sales (yhat): 500  
+- Low estimate (yhat_lower): 420  
+- High estimate (yhat_upper): 580  
 
-This means the model expects around $500, but sales could reasonably fall between $420 and $580.
+This means:
+
+The app expects sales to be around **500**.
+
+A realistic range is roughly **420 to 580**.
+"""
 
 ---
 
