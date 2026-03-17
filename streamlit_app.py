@@ -6,59 +6,80 @@ from prophet import Prophet
 st.set_page_config(page_title="Demand Forecasting Dashboard", layout="wide")
 
 st.title("Small Business Demand Forecasting")
-st.write("Upload a CSV file, map your columns, and generate a forecast with business insights.")
+st.write("Upload a CSV file, use a template or map your columns, and generate a forecast with business insights.")
 
 
 # -----------------------------
 # Helpers
 # -----------------------------
 def clean_sales_column(series: pd.Series) -> pd.Series:
-    """
-    Cleans sales values like:
-    $1,240.50
-    1,240
-    USD 540
-    """
     cleaned = (
         series.astype(str)
         .str.replace(",", "", regex=False)
         .str.replace("$", "", regex=False)
         .str.replace("USD", "", regex=False)
+        .str.replace("usd", "", regex=False)
         .str.strip()
     )
     return pd.to_numeric(cleaned, errors="coerce")
 
 
+def find_matching_column(df_columns, possible_names):
+    lower_map = {col.lower().strip(): col for col in df_columns}
+    for name in possible_names:
+        if name.lower().strip() in lower_map:
+            return lower_map[name.lower().strip()]
+    return None
+
+
+def detect_template_columns(df: pd.DataFrame, template_name: str):
+    cols = list(df.columns)
+
+    templates = {
+        "Shopify Orders Export": {
+            "date_candidates": ["Created at", "created at", "Date", "date", "Processed at", "processed at"],
+            "sales_candidates": ["Total", "total", "Net sales", "net sales", "Subtotal", "subtotal"]
+        },
+        "Square Sales Export": {
+            "date_candidates": ["Date", "date", "Time", "time", "Created At", "created at"],
+            "sales_candidates": ["Total Collected", "total collected", "Gross Sales", "gross sales", "Amount", "amount", "Net Total", "net total"]
+        },
+        "Walmart Weekly Sales": {
+            "date_candidates": ["Date", "date"],
+            "sales_candidates": ["Weekly_Sales", "weekly_sales", "Weekly Sales"]
+        }
+    }
+
+    if template_name not in templates:
+        return None, None
+
+    date_col = find_matching_column(cols, templates[template_name]["date_candidates"])
+    sales_col = find_matching_column(cols, templates[template_name]["sales_candidates"])
+    return date_col, sales_col
+
+
 def clean_and_prepare_data(df: pd.DataFrame, date_col: str, sales_col: str) -> pd.DataFrame:
     work_df = df[[date_col, sales_col]].copy()
-
-    # Rename columns
     work_df.rename(columns={date_col: "date", sales_col: "sales"}, inplace=True)
 
-    # Convert types
     work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
     work_df["sales"] = clean_sales_column(work_df["sales"])
 
     work_df = work_df.dropna(subset=["date", "sales"])
 
-    # FIX: proper groupby that keeps column name
     work_df = (
         work_df.groupby(work_df["date"].dt.date)["sales"]
         .sum()
         .reset_index()
     )
 
-    # Rename properly again
-    work_df.rename(columns={"date": "date"}, inplace=True)
     work_df["date"] = pd.to_datetime(work_df["date"])
 
-    # Fill missing dates
     full_dates = pd.date_range(work_df["date"].min(), work_df["date"].max(), freq="D")
     work_df = work_df.set_index("date").reindex(full_dates, fill_value=0).reset_index()
     work_df.columns = ["date", "sales"]
 
     prophet_df = work_df.rename(columns={"date": "ds", "sales": "y"}).sort_values("ds")
-
     return prophet_df
 
 
@@ -102,11 +123,7 @@ def convert_df_to_csv(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
 
-def build_insights(
-    future_forecast: pd.DataFrame,
-    weekday_summary: pd.DataFrame,
-    historical_df: pd.DataFrame
-) -> list[str]:
+def build_insights(future_forecast: pd.DataFrame, weekday_summary: pd.DataFrame, historical_df: pd.DataFrame) -> list[str]:
     insights = []
 
     busiest_day = weekday_summary.loc[weekday_summary["avg_sales"].idxmax(), "weekday"]
@@ -154,6 +171,11 @@ business_type = st.sidebar.selectbox(
     ["Restaurant", "Retail", "Salon", "Gym", "Other"]
 )
 
+template_type = st.sidebar.selectbox(
+    "Import template",
+    ["Custom / Auto Detect", "Shopify Orders Export", "Square Sales Export", "Walmart Weekly Sales"]
+)
+
 uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
 if uploaded_file is not None:
@@ -172,11 +194,31 @@ if uploaded_file is not None:
 
     columns = list(raw_df.columns)
 
+    auto_date_col = None
+    auto_sales_col = None
+
+    if template_type != "Custom / Auto Detect":
+        auto_date_col, auto_sales_col = detect_template_columns(raw_df, template_type)
+
+        if auto_date_col and auto_sales_col:
+            st.success(f"Template matched: date = '{auto_date_col}', sales = '{auto_sales_col}'")
+        else:
+            st.warning("Template could not confidently match both columns. Please select them manually below.")
+
+    default_date_index = 0
+    default_sales_index = 0
+
+    if auto_date_col in columns:
+        default_date_index = columns.index(auto_date_col)
+
+    if auto_sales_col in columns:
+        default_sales_index = columns.index(auto_sales_col)
+
     col1, col2 = st.columns(2)
     with col1:
-        date_col = st.selectbox("Select the date column", options=columns)
+        date_col = st.selectbox("Select the date column", options=columns, index=default_date_index)
     with col2:
-        sales_col = st.selectbox("Select the sales/revenue column", options=columns)
+        sales_col = st.selectbox("Select the sales/revenue column", options=columns, index=default_sales_index)
 
     if st.button("Generate Forecast"):
         try:
@@ -209,9 +251,6 @@ if uploaded_file is not None:
             total_next_period = future_forecast["yhat"].sum()
             avg_daily_next_period = future_forecast["yhat"].mean()
 
-            # -----------------------------
-            # KPI cards
-            # -----------------------------
             st.subheader("Key Insights")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Forecast Days", forecast_days)
@@ -224,34 +263,28 @@ if uploaded_file is not None:
             k6.metric("Highest Forecast Day", f"{highest_forecast_row['ds'].date()}")
             k7.metric("Lowest Forecast Day", f"{lowest_forecast_row['ds'].date()}")
 
-            # -----------------------------
-            # Recommendation box
-            # -----------------------------
             st.subheader("Recommendations")
             insights = build_insights(future_forecast, weekday_summary, prophet_df)
 
             if business_type == "Restaurant":
                 st.info("\n\n".join(insights + [
-                    "For restaurants, use this to prepare staffing, food prep, and weekend ordering."
+                    "For restaurants, use this to plan staffing, food prep, and ordering."
                 ]))
             elif business_type == "Retail":
                 st.info("\n\n".join(insights + [
-                    "For retail, use this to adjust inventory purchasing and staff coverage on peak days."
+                    "For retail, use this to plan purchasing, shelf inventory, and peak-day coverage."
                 ]))
             elif business_type == "Salon":
                 st.info("\n\n".join(insights + [
-                    "For salons, use this to plan appointment capacity and staffing during peak periods."
+                    "For salons, use this to anticipate appointment load and staffing needs."
                 ]))
             elif business_type == "Gym":
                 st.info("\n\n".join(insights + [
-                    "For gyms, use this to anticipate class demand and front-desk staffing needs."
+                    "For gyms, use this to anticipate class and foot-traffic demand."
                 ]))
             else:
                 st.info("\n\n".join(insights))
 
-            # -----------------------------
-            # Forecast table
-            # -----------------------------
             st.subheader(f"Next {forecast_days} Days Forecast")
             st.dataframe(future_forecast, use_container_width=True)
 
@@ -263,9 +296,6 @@ if uploaded_file is not None:
                 mime="text/csv"
             )
 
-            # -----------------------------
-            # Forecast chart
-            # -----------------------------
             st.subheader("Forecast Chart")
             fig1 = model.plot(forecast)
             plt.title("Sales Forecast")
@@ -273,22 +303,13 @@ if uploaded_file is not None:
             plt.ylabel("Sales")
             st.pyplot(fig1)
 
-            # -----------------------------
-            # Seasonal components
-            # -----------------------------
             st.subheader("Trend and Seasonality")
             fig2 = model.plot_components(forecast)
             st.pyplot(fig2)
 
-            # -----------------------------
-            # Weekday summary table
-            # -----------------------------
             st.subheader("Average Historical Sales by Weekday")
             st.dataframe(weekday_summary, use_container_width=True)
 
-            # -----------------------------
-            # Weekday bar chart
-            # -----------------------------
             st.subheader("Weekday Sales Pattern")
             fig3, ax = plt.subplots(figsize=(10, 4))
             ax.bar(weekday_summary["weekday"].astype(str), weekday_summary["avg_sales"])
@@ -298,9 +319,6 @@ if uploaded_file is not None:
             plt.xticks(rotation=45)
             st.pyplot(fig3)
 
-            # -----------------------------
-            # Cleaned data preview
-            # -----------------------------
             st.subheader("Cleaned Historical Daily Data")
             cleaned_display = prophet_df.rename(columns={"ds": "date", "y": "sales"}).copy()
             st.dataframe(cleaned_display.tail(30), use_container_width=True)
