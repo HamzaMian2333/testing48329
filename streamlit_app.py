@@ -263,7 +263,7 @@ yhat = 500
 yhat_lower = 420  
 yhat_upper = 580  
 
-This means the model expects around **$500**, but sales could reasonably fall between **$420 and $580**.
+This means the model expects around $500, but sales could reasonably fall between $420 and $580.
 
 ---
 
