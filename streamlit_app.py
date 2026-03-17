@@ -176,6 +176,118 @@ template_type = st.sidebar.selectbox(
     ["Custom / Auto Detect", "Shopify Orders Export", "Square Sales Export", "Walmart Weekly Sales"]
 )
 
+st.sidebar.markdown("---")
+
+st.sidebar.header("How to Use This App")
+
+st.sidebar.markdown(
+"""
+**Step 1 — Upload your CSV**
+
+Export your sales data from Shopify, Square, Excel, or your POS system and upload it.
+
+---
+
+**Step 2 — Choose a Template**
+
+Select a template that matches your export:
+- Shopify Orders Export
+- Square Sales Export
+- Custom / Auto Detect
+
+The app will try to automatically find your date and sales columns.
+
+---
+
+**Step 3 — Confirm Columns**
+
+Make sure the correct columns are selected:
+- **Date column** → when the sale happened  
+- **Sales column** → revenue or total sales
+
+---
+
+**Step 4 — Click Generate Forecast**
+
+The app will analyze your historical sales and predict the next **7–30 days** of demand.
+
+---
+
+**Step 5 — Read the Insights**
+
+The dashboard will show:
+
+• expected sales for upcoming days  
+• busiest weekday  
+• slowest weekday  
+• recommendations for staffing or inventory
+"""
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.header("How to Read the Forecast")
+
+st.sidebar.markdown(
+"""
+**yhat**
+
+This is the **predicted sales value** for that day.
+
+Example:  
+If **yhat = 500**, the model expects about **$500 in sales**.
+
+---
+
+**yhat_lower**
+
+This is the **lower estimate**.
+
+Sales are unlikely to go below this number.
+
+---
+
+**yhat_upper**
+
+This is the **upper estimate**.
+
+Sales are unlikely to go above this number.
+
+---
+
+**Example**
+
+If the forecast shows:
+
+yhat = 500  
+yhat_lower = 420  
+yhat_upper = 580  
+
+This means the model expects around **$500**, but sales could reasonably fall between **$420 and $580**.
+
+---
+
+**Busiest Weekday**
+
+The day that historically generates the **highest average sales**.
+
+---
+
+**Slowest Weekday**
+
+The day that historically has the **lowest average sales**.
+
+---
+
+**Recommendations**
+
+These suggestions help you plan:
+- staffing
+- inventory orders
+- busy days vs slow days
+"""
+)
+
 uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
 if uploaded_file is not None:
