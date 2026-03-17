@@ -30,28 +30,35 @@ def clean_sales_column(series: pd.Series) -> pd.Series:
 
 
 def clean_and_prepare_data(df: pd.DataFrame, date_col: str, sales_col: str) -> pd.DataFrame:
-    """
-    Clean uploaded data and return a daily aggregated dataframe
-    with Prophet-friendly columns: ds, y
-    """
     work_df = df[[date_col, sales_col]].copy()
-    work_df.columns = ["date", "sales"]
 
+    # Rename columns
+    work_df.rename(columns={date_col: "date", sales_col: "sales"}, inplace=True)
+
+    # Convert types
     work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
     work_df["sales"] = clean_sales_column(work_df["sales"])
 
     work_df = work_df.dropna(subset=["date", "sales"])
 
-    # Aggregate to daily totals
-    work_df = work_df.groupby(work_df["date"].dt.date, as_index=False)["sales"].sum()
+    # FIX: proper groupby that keeps column name
+    work_df = (
+        work_df.groupby(work_df["date"].dt.date)["sales"]
+        .sum()
+        .reset_index()
+    )
+
+    # Rename properly again
+    work_df.rename(columns={"date": "date"}, inplace=True)
     work_df["date"] = pd.to_datetime(work_df["date"])
 
-    # Fill missing dates with 0 sales
+    # Fill missing dates
     full_dates = pd.date_range(work_df["date"].min(), work_df["date"].max(), freq="D")
     work_df = work_df.set_index("date").reindex(full_dates, fill_value=0).reset_index()
     work_df.columns = ["date", "sales"]
 
     prophet_df = work_df.rename(columns={"date": "ds", "sales": "y"}).sort_values("ds")
+
     return prophet_df
 
 
