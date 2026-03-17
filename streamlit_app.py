@@ -214,7 +214,7 @@ if uploaded_file is not None:
 else:
     st.info("Upload a CSV to get started.")
     st.markdown(
-        """
+    """
 Example CSV format:
 
 ```csv
@@ -222,3 +222,6 @@ date,sales
 2025-01-01,420
 2025-01-02,390
 2025-01-03,510
+"""
+    )
+
